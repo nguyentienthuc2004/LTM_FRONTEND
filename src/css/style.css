@@ -1,0 +1,40 @@
+.container{
+  padding: "30px";
+  font-family: "Segoe UI, sans-serif" 
+}
+.container .title{
+  color: #333;
+  margin-bottom: 10px;
+}
+.temperature{
+  text-align: center;
+  background: #fff;
+  border-radius: 15px;
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  margin-bottom: 30px;
+}
+.current-temperature{
+  font-size: 3em;
+  font-weight: bold;
+}
+.temperature-chart{
+  background: #fff;
+  border-radius: 15px;
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  margin-bottom: 30px;
+}
+.statistic{
+  background: #fff;
+  border-radius: 15px;
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+.stat-card{
+  background: #f8f9fa;
+  border-radius: 10px;
+  padding: 10px;
+  text-align: center;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1),
+}
