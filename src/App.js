@@ -13,12 +13,12 @@ import {
 } from "recharts";
 
 function App() {
-  const [temps, setTemps] = useState([]); // dữ liệu realtime (chart)
-  const [stats, setStats] = useState(null); // thống kê 5s
-  const [currentTemp, setCurrentTemp] = useState(null); // nhiệt độ hiện tại
-  const [overflowCount, setOverflowCount] = useState(0); // tổng overflow
-  const [bufferCapacity, setBufferCapacity] = useState(null); // capacity (nếu server gửi)
-  const [lastOverflowAt, setLastOverflowAt] = useState(null); // thời điểm overflow cuối
+  const [temps, setTemps] = useState([]); 
+  const [stats, setStats] = useState(null); 
+  const [currentTemp, setCurrentTemp] = useState(null); 
+  const [overflowCount, setOverflowCount] = useState(0); 
+  const [bufferCapacity, setBufferCapacity] = useState(null); 
+  const [lastOverflowAt, setLastOverflowAt] = useState(null); 
   const wsRef = useRef(null);
 
   useEffect(() => {
@@ -31,7 +31,22 @@ function App() {
       try {
         const data = JSON.parse(event.data);
 
-        // Dữ liệu realtime (type=current)
+        // Realtime system snapshot
+        if (data.type === "system") {
+          setStats((prev) => ({
+            ...prev,
+            throttled: data.throttled,
+            bufferSize: data.bufferSize,
+            bufferCapacity: data.bufferCapacity,
+            totalOverflows: data.totalOverflows,
+            systemStatus: data.systemStatus,
+            timestamp: new Date(data.timestamp).toLocaleTimeString(),
+          }));
+          if (data.bufferCapacity) setBufferCapacity(data.bufferCapacity);
+          if (typeof data.totalOverflows === "number") setOverflowCount(data.totalOverflows);
+        }
+
+        // Dữ liệu realtime (current temperature)
         if (data.type === "current") {
           setCurrentTemp(data.temperature);
           setTemps((prev) => {
@@ -42,13 +57,14 @@ function App() {
                 temperature: data.temperature,
               },
             ];
-            return updated.slice(-200); // giới hạn 200 điểm
+            return updated.slice(-200);
           });
         }
 
-        // Dữ liệu thống kê (type=stats)
+        // Dữ liệu thống kê 5s
         if (data.type === "stats") {
-          setStats({
+          setStats((prev) => ({
+            ...prev,
             avg: Number(data.avg).toFixed(2),
             max: Number(data.max).toFixed(2),
             min: Number(data.min).toFixed(2),
@@ -57,24 +73,18 @@ function App() {
             rate: Number(data.rate).toFixed(2),
             count: data.count,
             throughput: Number(data.throughput).toFixed(2),
-            throttled: data.throttled,
             alert: data.alert,
-            bufferSize: data.bufferSize ?? null,
-            bufferCapacity: data.bufferCapacity ?? null,
-            totalOverflows: data.totalOverflows ?? overflowCount,
+            throttled: data.throttled,
+            bufferSize: data.bufferSize,
+            bufferCapacity: data.bufferCapacity,
+            totalOverflows: data.totalOverflows,
             timestamp: new Date(data.timestamp).toLocaleTimeString(),
-          });
-
-          if (data.bufferCapacity) setBufferCapacity(data.bufferCapacity);
-          if (typeof data.totalOverflows === "number") setOverflowCount(data.totalOverflows);
+          }));
         }
 
-        // Sự kiện overflow (type=overflow) — server broadcast ngay khi drop sample
+        // Event overflow
         if (data.type === "overflow") {
-          setOverflowCount((prev) => {
-            const next = data.totalOverflows ?? prev + 1;
-            return next;
-          });
+          setOverflowCount((prev) => data.totalOverflows ?? prev + 1);
           setLastOverflowAt(new Date(data.timestamp || Date.now()).toLocaleTimeString());
         }
       } catch (err) {
@@ -88,7 +98,6 @@ function App() {
     return () => ws.close();
   }, []);
 
-  // màu theo mức nhiệt
   const getTempColor = (temp) => {
     if (temp == null) return "#444";
     if (temp > 35) return "#dc3545";
@@ -96,7 +105,6 @@ function App() {
     return "#28a745";
   };
 
-  // progress % của buffer (0-100)
   const bufferPercent = () => {
     if (!stats || stats.bufferSize == null || bufferCapacity == null) return 0;
     return Math.min(100, Math.round((stats.bufferSize / bufferCapacity) * 100));
@@ -107,7 +115,6 @@ function App() {
       <h1 style={{ color: "#333", marginBottom: 6 }}>🌡️ Real-time Temperature Dashboard</h1>
       <p style={{ color: "#666", marginTop: 0 }}>Demo backpressure & buffer overflow (MQTT → Server → WebSocket)</p>
 
-      {/* Overflow banner */}
       {lastOverflowAt && (
         <div style={{
           background: "#ffe6e6",
@@ -122,7 +129,6 @@ function App() {
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 18 }}>
-        {/* Left column: current temp + small stats */}
         <div style={{ background: "#fff", padding: 16, borderRadius: 8, boxShadow: "0 2px 6px rgba(0,0,0,0.06)" }}>
           <h2 style={{ marginTop: 0 }}>Nhiệt độ hiện tại</h2>
           <div style={{ textAlign: "center", margin: "8px 0 16px" }}>
@@ -162,7 +168,6 @@ function App() {
           </div>
         </div>
 
-        {/* Right column: realtime chart */}
         <div style={{ background: "#fff", padding: 16, borderRadius: 8, boxShadow: "0 2px 6px rgba(0,0,0,0.06)" }}>
           <h3 style={{ marginTop: 0 }}>📈 Biểu đồ nhiệt độ thời gian thực</h3>
           <div style={{ width: "100%", height: 350 }}>
@@ -187,7 +192,6 @@ function App() {
         </div>
       </div>
 
-      {/* Thống kê 5s */}
       <div style={{ marginTop: 18, background: "#fff", padding: 16, borderRadius: 8, boxShadow: "0 2px 6px rgba(0,0,0,0.06)" }}>
         <h3 style={{ marginTop: 0 }}>📊 Thống kê mỗi 5 giây</h3>
         {stats ? (
@@ -197,14 +201,14 @@ function App() {
             gap: 12,
             marginTop: 12
           }}>
-            <StatCard label="🌡️ Trung bình" value={`${stats.avg} °C`} color="#28a745" />
-            <StatCard label="⬆️ Cao nhất" value={`${stats.max} °C`} color="#dc3545" />
-            <StatCard label="⬇️ Thấp nhất" value={`${stats.min} °C`} color="#007bff" />
-            <StatCard label="Δ Dao động" value={`${stats.fluctuation} °C`} color="#ffc107" />
-            <StatCard label="📈 Tốc độ" value={`${stats.rate} °C/s`} color="#17a2b8" />
-            <StatCard label="📦 Số mẫu" value={stats.count} color="#6c757d" />
-            <StatCard label="🚀 Throughput" value={`${stats.throughput} mẫu/s`} color="#6f42c1" />
-            <StatCard label="📦 Buffer" value={`${stats.bufferSize}${bufferCapacity ? `/${bufferCapacity}` : ""}`} color="#6c757d" />
+            <StatCard label="🌡️ Trung bình" value={`${stats.avg || "-"} °C`} color="#28a745" />
+            <StatCard label="⬆️ Cao nhất" value={`${stats.max || "-"} °C`} color="#dc3545" />
+            <StatCard label="⬇️ Thấp nhất" value={`${stats.min || "-"} °C`} color="#007bff" />
+            <StatCard label="Δ Dao động" value={`${stats.fluctuation || "-"} °C`} color="#ffc107" />
+            <StatCard label="📈 Tốc độ" value={`${stats.rate || "-"} °C/s`} color="#17a2b8" />
+            <StatCard label="📦 Số mẫu" value={stats.count || "-"} color="#6c757d" />
+            <StatCard label="🚀 Throughput" value={`${stats.throughput || "-"} mẫu/s`} color="#6f42c1" />
+            <StatCard label="📦 Buffer" value={`${stats.bufferSize || 0}${bufferCapacity ? `/${bufferCapacity}` : ""}`} color="#6c757d" />
             <StatCard label="⚙️ Trạng thái" value={stats.throttled ? "⚠️ Quá tải" : "Ổn định"} color={stats.throttled ? "#e74c3c" : "#28a745"} />
             <StatCard label="🚨 Cảnh báo nhiệt" value={stats.alert ? "Nguy hiểm" : "Bình thường"} color={stats.alert ? "#ff0000" : "#28a745"} />
           </div>
@@ -216,7 +220,6 @@ function App() {
   );
 }
 
-// small stat card
 function StatCard({ label, value, color }) {
   return (
     <div style={{
