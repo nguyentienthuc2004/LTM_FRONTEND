@@ -13,9 +13,10 @@ import {
 } from "recharts";
 
 function App() {
-  const [temps, setTemps] = useState([]); 
+  const [prices, setPrices] = useState([]); 
   const [stats, setStats] = useState(null); 
-  const [currentTemp, setCurrentTemp] = useState(null); 
+  const [currentPrice, setCurrentPrice] = useState(null); 
+  const [currentSymbol, setCurrentSymbol] = useState(null);
   const [overflowCount, setOverflowCount] = useState(0); 
   const [bufferCapacity, setBufferCapacity] = useState(null); 
   const [lastOverflowAt, setLastOverflowAt] = useState(null); 
@@ -46,15 +47,16 @@ function App() {
           if (typeof data.totalOverflows === "number") setOverflowCount(data.totalOverflows);
         }
 
-        // Dữ liệu realtime (current temperature)
+        // Dữ liệu realtime (current price)
         if (data.type === "current") {
-          setCurrentTemp(data.temperature);
-          setTemps((prev) => {
+          setCurrentPrice(data.price);
+          if (data.symbol) setCurrentSymbol(data.symbol);
+          setPrices((prev) => {
             const updated = [
               ...prev,
               {
                 time: new Date(data.time).toLocaleTimeString(),
-                temperature: data.temperature,
+                price: data.price,
               },
             ];
             return updated.slice(-200);
@@ -70,10 +72,9 @@ function App() {
             min: Number(data.min).toFixed(2),
             current: Number(data.current).toFixed(2),
             fluctuation: Number(data.fluctuation).toFixed(2),
-            rate: Number(data.rate).toFixed(2),
+            rate: Number(data.rate).toFixed(4),
             count: data.count,
             throughput: Number(data.throughput).toFixed(2),
-            alert: data.alert,
             throttled: data.throttled,
             bufferSize: data.bufferSize,
             bufferCapacity: data.bufferCapacity,
@@ -84,7 +85,7 @@ function App() {
 
         // Event overflow
         if (data.type === "overflow") {
-          setOverflowCount((prev) => data.totalOverflows ?? prev + 1);
+          setOverflowCount((prev) => (typeof data.totalOverflows === "number" ? data.totalOverflows : prev + 1));
           setLastOverflowAt(new Date(data.timestamp || Date.now()).toLocaleTimeString());
         }
       } catch (err) {
@@ -98,11 +99,11 @@ function App() {
     return () => ws.close();
   }, []);
 
-  const getTempColor = (temp) => {
-    if (temp == null) return "#444";
-    if (temp > 35) return "#dc3545";
-    if (temp < 15) return "#007bff";
-    return "#28a745";
+  const formatPriceColor = (price) => {
+    if (price == null) return "#444";
+    if (stats && stats.avg && price > Number(stats.avg)) return "#28a745"; // xanh nếu > avg
+    if (stats && stats.avg && price < Number(stats.avg)) return "#e74c3c"; // đỏ nếu < avg
+    return "#555";
   };
 
   const bufferPercent = () => {
@@ -112,7 +113,7 @@ function App() {
 
   return (
     <div style={{ padding: 20, fontFamily: "Inter, Roboto, Arial, sans-serif", color: "#222" }}>
-      <h1 style={{ color: "#333", marginBottom: 6 }}>🌡️ Real-time Temperature Dashboard</h1>
+      <h1 style={{ color: "#333", marginBottom: 6 }}>💹 Real-time Market Price Dashboard</h1>
       <p style={{ color: "#666", marginTop: 0 }}>Demo backpressure & buffer overflow (MQTT → Server → WebSocket)</p>
 
       {lastOverflowAt && (
@@ -130,10 +131,10 @@ function App() {
 
       <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 18 }}>
         <div style={{ background: "#fff", padding: 16, borderRadius: 8, boxShadow: "0 2px 6px rgba(0,0,0,0.06)" }}>
-          <h2 style={{ marginTop: 0 }}>Nhiệt độ hiện tại</h2>
+          <h2 style={{ marginTop: 0 }}>Giá hiện tại</h2>
           <div style={{ textAlign: "center", margin: "8px 0 16px" }}>
-            <p style={{ fontSize: "3.2rem", margin: 0, color: getTempColor(currentTemp) }}>
-              {currentTemp != null ? `${currentTemp.toFixed(2)} °C` : "⏳ Đang nhận..."}
+            <p style={{ fontSize: "3.2rem", margin: 0, color: formatPriceColor(currentPrice) }}>
+              {currentPrice != null ? `${currentSymbol ? currentSymbol + " " : ""}$${Number(currentPrice).toFixed(2)}` : "⏳ Đang nhận..."}
             </p>
             <small style={{ color: "#888" }}>{stats ? `Cập nhật: ${stats.timestamp}` : "Chưa có thống kê"}</small>
           </div>
@@ -169,21 +170,21 @@ function App() {
         </div>
 
         <div style={{ background: "#fff", padding: 16, borderRadius: 8, boxShadow: "0 2px 6px rgba(0,0,0,0.06)" }}>
-          <h3 style={{ marginTop: 0 }}>📈 Biểu đồ nhiệt độ thời gian thực</h3>
+          <h3 style={{ marginTop: 0 }}>📈 Biểu đồ giá thời gian thực</h3>
           <div style={{ width: "100%", height: 350 }}>
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={temps}>
+              <LineChart data={prices}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="time" minTickGap={20} />
                 <YAxis domain={["auto", "auto"]} />
-                <Tooltip />
+                <Tooltip formatter={(value) => `$${Number(value).toFixed(2)}`} />
                 <Legend />
                 <Line
                   type="monotone"
-                  dataKey="temperature"
-                  stroke="#ff7300"
+                  dataKey="price"
+                  stroke="#007bff"
                   dot={false}
-                  name="Nhiệt độ (°C)"
+                  name="Giá (USD)"
                   isAnimationActive={false}
                 />
               </LineChart>
@@ -201,16 +202,14 @@ function App() {
             gap: 12,
             marginTop: 12
           }}>
-            <StatCard label="🌡️ Trung bình" value={`${stats.avg || "-"} °C`} color="#28a745" />
-            <StatCard label="⬆️ Cao nhất" value={`${stats.max || "-"} °C`} color="#dc3545" />
-            <StatCard label="⬇️ Thấp nhất" value={`${stats.min || "-"} °C`} color="#007bff" />
-            <StatCard label="Δ Dao động" value={`${stats.fluctuation || "-"} °C`} color="#ffc107" />
-            <StatCard label="📈 Tốc độ" value={`${stats.rate || "-"} °C/s`} color="#17a2b8" />
+            <StatCard label="💰 Trung bình" value={`$${stats.avg || "-"}`} color="#28a745" />
+            <StatCard label="⬆️ Cao nhất" value={`$${stats.max || "-"}`} color="#dc3545" />
+            <StatCard label="⬇️ Thấp nhất" value={`$${stats.min || "-"}`} color="#007bff" />
+            <StatCard label="Δ Biên độ" value={`$${stats.fluctuation || "-"}`} color="#ffc107" />
+            <StatCard label="📈 Tốc độ biến động" value={`${stats.rate || "-"} $/s`} color="#17a2b8" />
             <StatCard label="📦 Số mẫu" value={stats.count || "-"} color="#6c757d" />
-            <StatCard label="🚀 Throughput" value={`${stats.throughput || "-"} mẫu/s`} color="#6f42c1" />
-            <StatCard label="📦 Buffer" value={`${stats.bufferSize || 0}${bufferCapacity ? `/${bufferCapacity}` : ""}`} color="#6c757d" />
+            <StatCard label="🚀 Throughput" value={`${stats.throughput || "-"} msg/s`} color="#6f42c1" />
             <StatCard label="⚙️ Trạng thái" value={stats.throttled ? "⚠️ Quá tải" : "Ổn định"} color={stats.throttled ? "#e74c3c" : "#28a745"} />
-            <StatCard label="🚨 Cảnh báo nhiệt" value={stats.alert ? "Nguy hiểm" : "Bình thường"} color={stats.alert ? "#ff0000" : "#28a745"} />
           </div>
         ) : (
           <p>⏳ Đang chờ dữ liệu thống kê...</p>
