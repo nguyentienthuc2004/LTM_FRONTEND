@@ -1,6 +1,6 @@
-// App.js
-import React, { useEffect, useState, useRef } from "react";
-import "./css/style.css";
+import React, { useEffect, useState } from "react";
+import SockJS from "sockjs-client";
+import { Client } from "@stomp/stompjs";
 import {
   LineChart,
   Line,
@@ -9,226 +9,188 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
+  ReferenceLine,
   ResponsiveContainer,
 } from "recharts";
+import "./App.css";
 
-function App() {
-  const [prices, setPrices] = useState([]); 
-  const [stats, setStats] = useState(null); 
-  const [currentPrice, setCurrentPrice] = useState(null); 
-  const [currentSymbol, setCurrentSymbol] = useState(null);
-  const [overflowCount, setOverflowCount] = useState(0); 
-  const [bufferCapacity, setBufferCapacity] = useState(null); 
-  const [lastOverflowAt, setLastOverflowAt] = useState(null); 
-  const wsRef = useRef(null);
+export default function App() {
+  const [metrics, setMetrics] = useState(null);
+  const [alerts, setAlerts] = useState([]);
+  const [transactions, setTransactions] = useState([]);
+
+  // format tiền Việt Nam Đồng
+  const formatVND = (value) =>
+    new Intl.NumberFormat("vi-VN", {
+      style: "currency",
+      currency: "VND",
+      maximumFractionDigits: 0,
+    }).format(value);
 
   useEffect(() => {
-    const ws = new WebSocket("ws://localhost:8884");
-    wsRef.current = ws;
+    const socketUrl = "http://localhost:9191/ws";
+    const socket = new SockJS(socketUrl);
 
-    ws.onopen = () => console.log("✅ Connected to WebSocket server");
+    const client = new Client({
+      webSocketFactory: () => socket,
+      reconnectDelay: 5000,
+      debug: (str) => console.debug("[STOMP DEBUG]", str),
+      onConnect: () => {
+        console.log("✅ Connected to WebSocket (STOMP)");
 
-    ws.onmessage = (event) => {
+        client.subscribe("/topic/metrics", (message) => {
+          try {
+            const payload = JSON.parse(message.body);
+            setMetrics(payload);
+          } catch (e) {
+            console.warn("Cannot parse /topic/metrics message", e);
+          }
+        });
+
+        client.subscribe("/topic/alerts", (message) => {
+          try {
+            const payload = JSON.parse(message.body);
+            setAlerts((prev) => [payload, ...prev].slice(0, 50));
+          } catch (e) {
+            console.warn("Cannot parse /topic/alerts message", e);
+          }
+        });
+
+        client.subscribe("/topic/transactions", (message) => {
+          try {
+            const tx = JSON.parse(message.body);
+            const point = {
+              id: `${tx.transactionId}-${Date.now()}-${Math.random()}`,
+              amount: Number(tx.amount) || 0,
+              time: new Date().toLocaleTimeString(),
+            };
+            setTransactions((prev) => {
+              const updated = [...prev, point];
+              return updated.slice(-200); // giữ 200 điểm gần nhất
+            });
+          } catch (e) {
+            console.warn("Cannot parse /topic/transactions message", e);
+          }
+        });
+      },
+      onStompError: (frame) => {
+        console.error("❌ STOMP error", frame);
+      },
+    });
+
+    client.activate();
+
+    return () => {
       try {
-        const data = JSON.parse(event.data);
-
-        // Realtime system snapshot
-        if (data.type === "system") {
-          setStats((prev) => ({
-            ...prev,
-            throttled: data.throttled,
-            bufferSize: data.bufferSize,
-            bufferCapacity: data.bufferCapacity,
-            totalOverflows: data.totalOverflows,
-            systemStatus: data.systemStatus,
-            timestamp: new Date(data.timestamp).toLocaleTimeString(),
-          }));
-          if (data.bufferCapacity) setBufferCapacity(data.bufferCapacity);
-          if (typeof data.totalOverflows === "number") setOverflowCount(data.totalOverflows);
-        }
-
-        // Dữ liệu realtime (current price)
-        if (data.type === "current") {
-          setCurrentPrice(data.price);
-          if (data.symbol) setCurrentSymbol(data.symbol);
-          setPrices((prev) => {
-            const updated = [
-              ...prev,
-              {
-                time: new Date(data.time).toLocaleTimeString(),
-                price: data.price,
-              },
-            ];
-            return updated.slice(-200);
-          });
-        }
-
-        // Dữ liệu thống kê 5s
-        if (data.type === "stats") {
-          setStats((prev) => ({
-            ...prev,
-            avg: Number(data.avg).toFixed(2),
-            max: Number(data.max).toFixed(2),
-            min: Number(data.min).toFixed(2),
-            current: Number(data.current).toFixed(2),
-            fluctuation: Number(data.fluctuation).toFixed(2),
-            rate: Number(data.rate).toFixed(4),
-            count: data.count,
-            throughput: Number(data.throughput).toFixed(2),
-            throttled: data.throttled,
-            bufferSize: data.bufferSize,
-            bufferCapacity: data.bufferCapacity,
-            totalOverflows: data.totalOverflows,
-            timestamp: new Date(data.timestamp).toLocaleTimeString(),
-          }));
-        }
-
-        // Event overflow
-        if (data.type === "overflow") {
-          setOverflowCount((prev) => (typeof data.totalOverflows === "number" ? data.totalOverflows : prev + 1));
-          setLastOverflowAt(new Date(data.timestamp || Date.now()).toLocaleTimeString());
-        }
-      } catch (err) {
-        console.error("⚠️ Invalid JSON:", event.data);
+        client.deactivate();
+      } catch (e) {
+        console.warn("Error deactivating STOMP client", e);
       }
     };
-
-    ws.onerror = (err) => console.error("❌ WebSocket error:", err);
-    ws.onclose = () => console.log("🔌 WebSocket connection closed");
-
-    return () => ws.close();
   }, []);
 
-  const formatPriceColor = (price) => {
-    if (price == null) return "#444";
-    if (stats && stats.avg && price > Number(stats.avg)) return "#28a745"; // xanh nếu > avg
-    if (stats && stats.avg && price < Number(stats.avg)) return "#e74c3c"; // đỏ nếu < avg
-    return "#555";
-  };
-
-  const bufferPercent = () => {
-    if (!stats || stats.bufferSize == null || bufferCapacity == null) return 0;
-    return Math.min(100, Math.round((stats.bufferSize / bufferCapacity) * 100));
-  };
-
   return (
-    <div style={{ padding: 20, fontFamily: "Inter, Roboto, Arial, sans-serif", color: "#222" }}>
-      <h1 style={{ color: "#333", marginBottom: 6 }}>💹 Real-time Market Price Dashboard</h1>
-      <p style={{ color: "#666", marginTop: 0 }}>Demo backpressure & buffer overflow (MQTT → Server → WebSocket)</p>
+    <div className="container">
+      <h1>⚡ Real-time Transaction Dashboard</h1>
 
-      {lastOverflowAt && (
-        <div style={{
-          background: "#ffe6e6",
-          border: "1px solid #ffb3b3",
-          color: "#a00",
-          padding: "10px 12px",
-          borderRadius: 6,
-          marginBottom: 12
-        }}>
-          🚨 Overflow detected — sample dropped at {lastOverflowAt}. Total overflows: {overflowCount}
-        </div>
-      )}
-
-      <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 18 }}>
-        <div style={{ background: "#fff", padding: 16, borderRadius: 8, boxShadow: "0 2px 6px rgba(0,0,0,0.06)" }}>
-          <h2 style={{ marginTop: 0 }}>Giá hiện tại</h2>
-          <div style={{ textAlign: "center", margin: "8px 0 16px" }}>
-            <p style={{ fontSize: "3.2rem", margin: 0, color: formatPriceColor(currentPrice) }}>
-              {currentPrice != null ? `${currentSymbol ? currentSymbol + " " : ""}$${Number(currentPrice).toFixed(2)}` : "⏳ Đang nhận..."}
-            </p>
-            <small style={{ color: "#888" }}>{stats ? `Cập nhật: ${stats.timestamp}` : "Chưa có thống kê"}</small>
-          </div>
-
-          <div style={{ marginTop: 12 }}>
-            <h4 style={{ margin: "6px 0 8px" }}>Buffer</h4>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <div style={{
-                flex: 1,
-                height: 14,
-                background: "#eee",
-                borderRadius: 8,
-                overflow: "hidden"
-              }}>
-                <div style={{
-                  width: `${bufferPercent()}%`,
-                  height: "100%",
-                  background: stats && stats.throttled ? "#e74c3c" : "#4caf50",
-                  transition: "width 300ms ease"
-                }} />
-              </div>
-              <div style={{ width: 80, textAlign: "right", color: "#555" }}>
-                {stats && stats.bufferSize != null ? `${stats.bufferSize}${bufferCapacity ? `/${bufferCapacity}` : ""}` : "-"}
-              </div>
-            </div>
-
-            <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", color: "#666" }}>
-              <div>Overflows: <strong style={{ color: "#c0392b" }}>{overflowCount}</strong></div>
-              <div>Throttled: <strong style={{ color: stats && stats.throttled ? "#c0392b" : "#27ae60" }}>
-                {stats && stats.throttled ? "YES" : "NO"}</strong></div>
-            </div>
-          </div>
-        </div>
-
-        <div style={{ background: "#fff", padding: 16, borderRadius: 8, boxShadow: "0 2px 6px rgba(0,0,0,0.06)" }}>
-          <h3 style={{ marginTop: 0 }}>📈 Biểu đồ giá thời gian thực</h3>
-          <div style={{ width: "100%", height: 350 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={prices}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="time" minTickGap={20} />
-                <YAxis domain={["auto", "auto"]} />
-                <Tooltip formatter={(value) => `$${Number(value).toFixed(2)}`} />
+      {/* CHART */}
+      <div className="chart-wrapper">
+        <div className="chart-container">
+          {transactions.length > 0 ? (
+            <ResponsiveContainer width="100%" height={350}>
+              <LineChart data={transactions}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#ccc" />
+                <XAxis
+                  dataKey="time"
+                  tick={{ fill: "#333", fontSize: 12 }}
+                  interval={0}
+                  textAnchor="middle"
+                />
+                <YAxis
+                  tick={{ fill: "#333" }}
+                  label={{
+                    value: "Số tiền (VNĐ)",
+                    angle: -90,
+                    position: "insideLeft",
+                    fill: "#333",
+                  }}
+                />
+                <Tooltip
+                  formatter={(v) => formatVND(v)}
+                  contentStyle={{ backgroundColor: "#fff", border: "1px solid #ccc" }}
+                  labelStyle={{ color: "#333" }}
+                />
                 <Legend />
+                <ReferenceLine
+                  y={10000}
+                  label={{
+                    value: "Giới hạn 10.000",
+                    position: "top",
+                    fill: "#ef4444",
+                  }}
+                  stroke="#ef4444"
+                  strokeDasharray="6 3"
+                />
                 <Line
                   type="monotone"
-                  dataKey="price"
-                  stroke="#007bff"
-                  dot={false}
-                  name="Giá (USD)"
+                  dataKey="amount"
+                  stroke="#3b82f6"
+                  strokeWidth={2}
+                  dot={{ r: 3 }}
                   isAnimationActive={false}
                 />
               </LineChart>
             </ResponsiveContainer>
-          </div>
+          ) : (
+            <p>Chưa có dữ liệu giao dịch</p>
+          )}
         </div>
       </div>
 
-      <div style={{ marginTop: 18, background: "#fff", padding: 16, borderRadius: 8, boxShadow: "0 2px 6px rgba(0,0,0,0.06)" }}>
-        <h3 style={{ marginTop: 0 }}>📊 Thống kê mỗi 5 giây</h3>
-        {stats ? (
-          <div style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-            gap: 12,
-            marginTop: 12
-          }}>
-            <StatCard label="💰 Trung bình" value={`$${stats.avg || "-"}`} color="#28a745" />
-            <StatCard label="⬆️ Cao nhất" value={`$${stats.max || "-"}`} color="#dc3545" />
-            <StatCard label="⬇️ Thấp nhất" value={`$${stats.min || "-"}`} color="#007bff" />
-            <StatCard label="Δ Biên độ" value={`$${stats.fluctuation || "-"}`} color="#ffc107" />
-            <StatCard label="📈 Tốc độ biến động" value={`${stats.rate || "-"} $/s`} color="#17a2b8" />
-            <StatCard label="📦 Số mẫu" value={stats.count || "-"} color="#6c757d" />
-            <StatCard label="🚀 Throughput" value={`${stats.throughput || "-"} msg/s`} color="#6f42c1" />
-            <StatCard label="⚙️ Trạng thái" value={stats.throttled ? "⚠️ Quá tải" : "Ổn định"} color={stats.throttled ? "#e74c3c" : "#28a745"} />
-          </div>
-        ) : (
-          <p>⏳ Đang chờ dữ liệu thống kê...</p>
-        )}
+      {/* METRICS & ALERTS */}
+      <div className="info-row">
+        <div className="card metrics">
+          <h2>📊 Metrics</h2>
+          {metrics ? (
+            <div>
+              <p><b>Tổng giao dịch nhận được:</b> {metrics.totalTransactions}</p>
+              <p><b>Tổng giao dịch hợp lệ:</b> {metrics.totalValid}</p>
+              <p><b>Tổng tiền:</b> {formatVND(metrics.sumAmount)}</p>
+              <p><b>Giao dịch lớn nhất:</b> {formatVND(metrics.maxAmount)}</p>
+              <p><b>Trung bình:</b> {formatVND(metrics.avgAmount)}</p>
+              <h4>Top {metrics.topK?.length || 0} giao dịch</h4>
+              <ol className="top-list">
+                {metrics.topK?.map((tx, idx) => (
+                  <li key={`${tx.transactionId}-${idx}`}>
+                    <span className="tx-id">{tx.transactionId}</span> —{" "}
+                    <span className="tx-user">{tx.userId}</span> —{" "}
+                    <span className="tx-amount">{formatVND(tx.amount)}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ) : (
+            <p>Chưa có dữ liệu metrics</p>
+          )}
+        </div>
+
+        <div className="card alerts">
+          <h2>⚠️ Alerts</h2>
+          <ul>
+            {alerts.map((a, idx) => (
+              <li key={`${a.transactionId}-${idx}`}>
+                🧨 <b>{a.userId}</b> — {a.transactionId} —{" "}
+                <span className="alert-amount">{formatVND(a.amount)}</span> —{" "}
+                <span className="alert-reason">{a.reason}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+
+      <div className="footer">
+        Made with ❤️ using <b>Spring Boot</b> + <b>RxJava</b> + <b>React</b>
       </div>
     </div>
   );
 }
-
-function StatCard({ label, value, color }) {
-  return (
-    <div style={{
-      padding: 12, borderRadius: 8, border: "1px solid #f0f0f0",
-      background: "#fafafa"
-    }}>
-      <div style={{ fontSize: 13, color: "#555", marginBottom: 6 }}>{label}</div>
-      <div style={{ fontSize: 18, fontWeight: 700, color }}>{value}</div>
-    </div>
-  );
-}
-
-export default App;

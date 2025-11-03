@@ -1,38 +1,112 @@
-.App {
+body {
+  font-family: "Segoe UI", Roboto, sans-serif;
+  background-color: #f8fafc;
+  color: #333;
+  margin: 0;
+  padding: 0;
+}
+
+.container {
+  max-width: 95%;
+  margin: 20px auto;
+  padding: 20px;
+}
+
+h1 {
   text-align: center;
+  color: #1e3a8a;
+  margin-bottom: 30px;
 }
 
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
+.card {
+  background: #fff;
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 25px;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
+.card h2 {
+  color: #0f172a;
+  margin-bottom: 15px;
 }
 
-.App-header {
-  background-color: #282c34;
-  min-height: 100vh;
+/* Chart */
+.chart-wrapper {
+  overflow: hidden;
+}
+
+.chart-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  padding-bottom: 10px;
+}
+
+/* Row chia 2 cột */
+.row {
+  display: flex;
+  gap: 20px;
+}
+
+.metrics, .alerts {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Metrics */
+.metrics-grid {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
+  gap: 10px;
 }
 
-.App-link {
-  color: #61dafb;
+.metric-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e2e8f0;
 }
 
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+.metric-item span {
+  font-weight: bold;
+  color: #2563eb;
+}
+
+.top-transactions ol {
+  padding-left: 20px;
+  margin-top: 10px;
+}
+
+/* Alerts */
+.alerts ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.alerts li {
+  background: #fff4f4;
+  border-left: 4px solid #ef4444;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border-radius: 5px;
+}
+
+.alert-amount {
+  color: #dc2626;
+  font-weight: bold;
+}
+
+.alert-reason {
+  color: #6b7280;
+  font-style: italic;
+}
+
+.footer {
+  text-align: center;
+  margin-top: 20px;
+  color: #64748b;
 }
