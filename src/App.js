@@ -14,9 +14,21 @@ import {
 } from "recharts";
 import "./App.css";
 
+// Component cho các card nhỏ hiển thị số đo
+function StatCard({ label, value, color }) {
+  return (
+    <div className="stat-card" style={{ borderTop: `4px solid ${color}` }}>
+      <div className="stat-label">{label}</div>
+      <div className="stat-value">{value}</div>
+    </div>
+  );
+}
+
 export default function App() {
-  const [metrics, setMetrics] = useState(null);
+  const [metrics, setMetrics] = useState(null); // business metrics
+  const [performance, setPerformance] = useState(null); // performance metrics
   const [alerts, setAlerts] = useState([]);
+  const [totalAlerts, setTotalAlerts] = useState(0); // tổng số alert
   const [transactions, setTransactions] = useState([]);
 
   // format tiền Việt Nam Đồng
@@ -26,6 +38,11 @@ export default function App() {
       currency: "VND",
       maximumFractionDigits: 0,
     }).format(value);
+
+  const formatNumber = (v) => {
+    if (v == null || Number.isNaN(v)) return "-";
+    return Number(v).toFixed(2);
+  };
 
   useEffect(() => {
     const socketUrl = "http://localhost:9191/ws";
@@ -38,6 +55,7 @@ export default function App() {
       onConnect: () => {
         console.log("✅ Connected to WebSocket (STOMP)");
 
+        // business metrics
         client.subscribe("/topic/metrics", (message) => {
           try {
             const payload = JSON.parse(message.body);
@@ -47,6 +65,7 @@ export default function App() {
           }
         });
 
+        // alerts
         client.subscribe("/topic/alerts", (message) => {
           try {
             const payload = JSON.parse(message.body);
@@ -56,6 +75,17 @@ export default function App() {
           }
         });
 
+        // tổng số alert
+        client.subscribe("/topic/alertStats", (message) => {
+          try {
+            const payload = JSON.parse(message.body);
+            setTotalAlerts(payload.totalAlerts || 0);
+          } catch (e) {
+            console.warn("Cannot parse /topic/alertStats message", e);
+          }
+        });
+
+        // transactions
         client.subscribe("/topic/transactions", (message) => {
           try {
             const tx = JSON.parse(message.body);
@@ -66,10 +96,20 @@ export default function App() {
             };
             setTransactions((prev) => {
               const updated = [...prev, point];
-              return updated.slice(-200); // giữ 200 điểm gần nhất
+              return updated.slice(-200);
             });
           } catch (e) {
             console.warn("Cannot parse /topic/transactions message", e);
+          }
+        });
+
+        // performance metrics
+        client.subscribe("/topic/performance", (message) => {
+          try {
+            const payload = JSON.parse(message.body);
+            setPerformance(payload);
+          } catch (e) {
+            console.warn("Cannot parse /topic/performance message", e);
           }
         });
       },
@@ -123,11 +163,7 @@ export default function App() {
                 <Legend />
                 <ReferenceLine
                   y={10000}
-                  label={{
-                    value: "Giới hạn 10.000",
-                    position: "top",
-                    fill: "#ef4444",
-                  }}
+                  label={{ value: "Giới hạn 10.000", position: "top", fill: "#ef4444" }}
                   stroke="#ef4444"
                   strokeDasharray="6 3"
                 />
@@ -147,38 +183,36 @@ export default function App() {
         </div>
       </div>
 
-      {/* METRICS & ALERTS */}
+      {/* METRICS & PERFORMANCE */}
       <div className="info-row">
         <div className="card metrics">
-          <h2>📊 Metrics</h2>
-          {metrics ? (
-            <div>
-              <p><b>Tổng giao dịch nhận được:</b> {metrics.totalTransactions}</p>
-              <p><b>Tổng giao dịch hợp lệ:</b> {metrics.totalValid}</p>
-              <p><b>Tổng tiền:</b> {formatVND(metrics.sumAmount)}</p>
-              <p><b>Giao dịch lớn nhất:</b> {formatVND(metrics.maxAmount)}</p>
-              <p><b>Trung bình:</b> {formatVND(metrics.avgAmount)}</p>
-              <h4>Top {metrics.topK?.length || 0} giao dịch</h4>
-              <ol className="top-list">
-                {metrics.topK?.map((tx, idx) => (
-                  <li key={`${tx.transactionId}-${idx}`}>
-                    <span className="tx-id">{tx.transactionId}</span> —{" "}
-                    <span className="tx-user">{tx.userId}</span> —{" "}
-                    <span className="tx-amount">{formatVND(tx.amount)}</span>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          ) : (
-            <p>Chưa có dữ liệu metrics</p>
-          )}
+          <h2>📊 Metrics & Performance</h2>
+          <div className="stat-grid">
+            {metrics && (
+              <>
+                <StatCard label="📦 Tổng giao dịch nhận" value={metrics.totalTransactions} color="#6f42c1" />
+                <StatCard label="✅ Giao dịch hợp lệ" value={metrics.totalValid} color="#28a745" />
+                <StatCard label="💰 Tổng tiền" value={formatVND(metrics.sumAmount)} color="#ffc107" />
+                <StatCard label="⬆️ Giao dịch lớn nhất" value={formatVND(metrics.maxAmount)} color="#dc3545" />
+                <StatCard label="📊 Trung bình" value={formatVND(metrics.avgAmount)} color="#007bff" />
+              </>
+            )}
+            {performance && (
+              <>
+                <StatCard label="🚀 Throughput (tx/s)" value={formatNumber(performance.throughputWindowTxPerSec)} color="#6f42c1" />
+                <StatCard label="📦 Pending (backlog)" value={performance.pending} color="#6c757d" />
+                <StatCard label="⏱️ Avg processing (ms)" value={formatNumber(performance.avgProcessingMs)} color="#17a2b8" />
+              </>
+            )}
+          </div>
         </div>
 
+        {/* ALERTS */}
         <div className="card alerts">
-          <h2>⚠️ Alerts</h2>
+          <h2>⚠️ Alerts ({totalAlerts})</h2> {/* hiển thị tổng số alert */}
           <ul>
             {alerts.map((a, idx) => (
-              <li key={`${a.transactionId}-${idx}`}>
+              <li key={`${a.transactionId || idx}-${idx}`}>
                 🧨 <b>{a.userId}</b> — {a.transactionId} —{" "}
                 <span className="alert-amount">{formatVND(a.amount)}</span> —{" "}
                 <span className="alert-reason">{a.reason}</span>
