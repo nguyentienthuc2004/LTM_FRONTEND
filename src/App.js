@@ -1,3 +1,4 @@
+// File: src/App.js
 import React, { useEffect, useState } from "react";
 import SockJS from "sockjs-client";
 import { Client } from "@stomp/stompjs";
@@ -24,28 +25,49 @@ function StatCard({ label, value, color }) {
   );
 }
 
+function ProgressBar({ percent }) {
+  const clamped = Math.max(0, Math.min(100, percent));
+  let barColor = "#10b981"; // green
+  if (clamped >= 90) barColor = "#dc3545"; // red
+  else if (clamped >= 70) barColor = "#f59e0b"; // amber
+
+  return (
+    <div className="progress-outer" aria-hidden>
+      <div
+        className="progress-inner"
+        style={{
+          width: `${clamped}%`,
+          backgroundColor: barColor,
+        }}
+      />
+    </div>
+  );
+}
+
 export default function App() {
   const [metrics, setMetrics] = useState(null); // business metrics
   const [performance, setPerformance] = useState(null); // performance metrics
-  const [alerts, setAlerts] = useState([]);
+  const [alerts, setAlerts] = useState([]); // stream alerts (AlertPayload)
   const [totalAlerts, setTotalAlerts] = useState(0); // tổng số alert
   const [transactions, setTransactions] = useState([]);
+  const [bpAlerts, setBpAlerts] = useState([]); // các sự kiện backpressure gần đây
+  const [banner, setBanner] = useState(null); // banner ngắn khi có backpressure event
 
-  // format tiền Việt Nam Đồng
+  // Format tiền Việt Nam Đồng
   const formatVND = (value) =>
     new Intl.NumberFormat("vi-VN", {
       style: "currency",
       currency: "VND",
       maximumFractionDigits: 0,
-    }).format(value);
+    }).format(value ?? 0);
 
   const formatNumber = (v) => {
-    if (v == null || Number.isNaN(v)) return "-";
+    if (v == null || Number.isNaN(Number(v))) return "-";
     return Number(v).toFixed(2);
   };
 
   useEffect(() => {
-    const socketUrl = "http://localhost:9191/ws";
+    const socketUrl = "http://localhost:9191/ws"; // đổi nếu server khác
     const socket = new SockJS(socketUrl);
 
     const client = new Client({
@@ -55,17 +77,18 @@ export default function App() {
       onConnect: () => {
         console.log("✅ Connected to WebSocket (STOMP)");
 
-        // business metrics
+        // business metrics (MetricsPayload)
         client.subscribe("/topic/metrics", (message) => {
           try {
             const payload = JSON.parse(message.body);
+            // MetricsPayload: totalTransactions, totalValid, sumAmount, maxAmount, avgAmount, topK (list), recentAlerts (list)
             setMetrics(payload);
           } catch (e) {
             console.warn("Cannot parse /topic/metrics message", e);
           }
         });
 
-        // alerts
+        // alerts (AlertPayload) - stream khi transaction > threshold
         client.subscribe("/topic/alerts", (message) => {
           try {
             const payload = JSON.parse(message.body);
@@ -85,31 +108,58 @@ export default function App() {
           }
         });
 
-        // transactions
+        // transactions (stream chart) - server gửi Transaction objects
         client.subscribe("/topic/transactions", (message) => {
           try {
             const tx = JSON.parse(message.body);
             const point = {
-              id: `${tx.transactionId}-${Date.now()}-${Math.random()}`,
+              id: `${tx.transactionId || Math.random()}-${Date.now()}`,
               amount: Number(tx.amount) || 0,
               time: new Date().toLocaleTimeString(),
+              ...tx,
             };
             setTransactions((prev) => {
               const updated = [...prev, point];
-              return updated.slice(-200);
+              return updated.slice(-200); // lưu tối đa 200 điểm
             });
           } catch (e) {
             console.warn("Cannot parse /topic/transactions message", e);
           }
         });
 
-        // performance metrics
+        // performance metrics (perf map)
         client.subscribe("/topic/performance", (message) => {
           try {
             const payload = JSON.parse(message.body);
+            // payload: { timestamp, throughputWindowTxPerSec, pending, avgProcessingMs }
             setPerformance(payload);
           } catch (e) {
             console.warn("Cannot parse /topic/performance message", e);
+          }
+        });
+
+        // backpressure / overflow events
+        client.subscribe("/topic/backpressure", (message) => {
+          try {
+            const payload = JSON.parse(message.body);
+            // backend gửi { event, timestamp } (có thể mở rộng thêm fields)
+            const timeStr = payload.timestamp
+              ? new Date(payload.timestamp).toLocaleTimeString()
+              : new Date().toLocaleTimeString();
+            const bannerObj = {
+              event: payload.event || "BACKPRESSURE",
+              time: timeStr,
+              // nếu backend gửi thêm capacity/size thì dùng luôn
+              size: payload.size,
+              capacity: payload.capacity,
+            };
+            setBanner(bannerObj);
+            setBpAlerts((prev) => [payload, ...prev].slice(0, 50));
+
+            // xóa banner sau 8s
+            setTimeout(() => setBanner(null), 8000);
+          } catch (e) {
+            console.warn("Cannot parse /topic/backpressure message", e);
           }
         });
       },
@@ -127,11 +177,22 @@ export default function App() {
         console.warn("Error deactivating STOMP client", e);
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
     <div className="container">
       <h1>⚡ Real-time Transaction Dashboard</h1>
+
+      {/* Banner hiển thị event tràn (backpressure) */}
+      {banner && (
+        <div className="banner">
+          🚨 <b>{banner.event}</b>
+          {banner.size != null && <> — size: {banner.size}</>}
+          {banner.capacity != null && <> / {banner.capacity}</>}
+          <span className="banner-time"> ({banner.time})</span>
+        </div>
+      )}
 
       {/* CHART */}
       <div className="chart-wrapper">
@@ -139,7 +200,7 @@ export default function App() {
           {transactions.length > 0 ? (
             <ResponsiveContainer width="100%" height={350}>
               <LineChart data={transactions}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#ccc" />
+                <CartesianGrid strokeDasharray="3 3" stroke="#e6e6e6" />
                 <XAxis
                   dataKey="time"
                   tick={{ fill: "#333", fontSize: 12 }}
@@ -157,7 +218,7 @@ export default function App() {
                 />
                 <Tooltip
                   formatter={(v) => formatVND(v)}
-                  contentStyle={{ backgroundColor: "#fff", border: "1px solid #ccc" }}
+                  contentStyle={{ backgroundColor: "#fff", border: "1px solid #eee" }}
                   labelStyle={{ color: "#333" }}
                 />
                 <Legend />
@@ -197,33 +258,56 @@ export default function App() {
                 <StatCard label="📊 Trung bình" value={formatVND(metrics.avgAmount)} color="#007bff" />
               </>
             )}
+
             {performance && (
               <>
-                <StatCard label="🚀 Throughput (tx/s)" value={formatNumber(performance.throughputWindowTxPerSec)} color="#6f42c1" />
-                <StatCard label="📦 Pending (backlog)" value={performance.pending} color="#6c757d" />
-                <StatCard label="⏱️ Avg processing (ms)" value={formatNumber(performance.avgProcessingMs)} color="#17a2b8" />
+                <StatCard
+                  label="🚀 Throughput (tx/s)"
+                  value={formatNumber(performance.throughputWindowTxPerSec)}
+                  color="#6f42c1"
+                />
+                <StatCard
+                  label="⏳ Pending (ingested - processed)"
+                  value={performance.pending != null ? performance.pending : "-"}
+                  color="#6c757d"
+                />
+                <StatCard
+                  label="⏱️ Avg processing (ms)"
+                  value={formatNumber(performance.avgProcessingMs || performance.avgProcessingMs === 0 ? performance.avgProcessingMs : performance.avgProcessingMs)}
+                  color="#17a2b8"
+                />
               </>
             )}
           </div>
         </div>
 
-        {/* ALERTS */}
+        {/* ALERTS (stream từ /topic/alerts) */}
         <div className="card alerts">
-          <h2>⚠️ Alerts ({totalAlerts})</h2> {/* hiển thị tổng số alert */}
+          <h2>⚠️ Alerts ({totalAlerts})</h2>
           <ul>
             {alerts.map((a, idx) => (
               <li key={`${a.transactionId || idx}-${idx}`}>
-                🧨 <b>{a.userId}</b> — {a.transactionId} —{" "}
-                <span className="alert-amount">{formatVND(a.amount)}</span> —{" "}
+                🧨 <b>{a.userId}</b> — {a.transactionId} — {" "}
+                <span className="alert-amount">{formatVND(a.amount)}</span> — {" "}
                 <span className="alert-reason">{a.reason}</span>
               </li>
             ))}
           </ul>
-        </div>
-      </div>
 
-      <div className="footer">
-        Made with ❤️ using <b>Spring Boot</b> + <b>RxJava</b> + <b>React</b>
+          {/* Backpressure recent events */}
+          {bpAlerts.length > 0 && (
+            <>
+              <h4>⚠ Backpressure events (gần đây)</h4>
+              <ul className="bp-list">
+                {bpAlerts.map((b, i) => (
+                  <li key={i}>
+                    <b>{b.event}</b> — {b.timestamp ? new Date(b.timestamp).toLocaleTimeString() : ""}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
